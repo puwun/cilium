@@ -236,6 +236,20 @@ func runServiceEndpointsReflector(ctx context.Context, health cell.Health, p ref
 			return bytes.Compare(a.Address.Bytes(), b.Address.Bytes())
 		})
 
+		// Filter out frontends that are already owned by LocalRedirect services.
+		// This allows CiliumLocalRedirectPolicy with addressMatcher to take precedence
+		// over k8s services that happen to use the same ClusterIP.
+		fes = slices.DeleteFunc(fes, func(fe loadbalancer.FrontendParams) bool {
+			existing, _, found := p.Writer.Frontends().Get(txn, loadbalancer.FrontendByAddress(fe.Address))
+			if found && existing.Type == loadbalancer.SVCTypeLocalRedirect {
+				p.Log.Debug("Skipping frontend owned by LocalRedirectPolicy",
+					logfields.Address, fe.Address,
+					logfields.ServiceName, existing.ServiceName)
+				return true
+			}
+			return false
+		})
+
 		err := p.Writer.UpsertServiceAndFrontends(txn, svc, fes...)
 		rh.update("svc:"+svc.Name.String(), err)
 	}
